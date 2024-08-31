@@ -1,0 +1,11 @@
+[package]
+name = "GitHub-Repository-Sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+git2 = "0.13"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5"
+chrono = "0.4.38"
