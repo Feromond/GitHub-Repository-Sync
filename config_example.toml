@@ -1,7 +1,7 @@
 [github]
 owner = "<git-username>"                 # Your GitHub username
 repo = "<git-repo-name>"                 # Your GitHub repo name that you will be comparing with
-access_token = "<personal-access-token>" # Optional, omit if public repo
+access_token = "<personal-access-token>" # Optional, omit if public repo (make sure to comment out or delete if omitting)
 
 [local_repo]
 path = "path/to/your/local/repo" # Input the path to your local repo
