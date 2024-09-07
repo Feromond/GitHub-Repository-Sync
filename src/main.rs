@@ -1,8 +1,11 @@
 use chrono::{DateTime, Utc};
 use git2::Repository;
+use log::{error, info};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use simplelog::*;
 use std::fs;
+use std::fs::File;
 use std::io::{self, Write};
 use std::process::Command;
 use std::thread;
@@ -47,31 +50,44 @@ fn get_latest_commit_sha(config: &GitHubConfig) -> Option<String> {
         request = request.header("Authorization", format!("token {}", token));
     }
 
-    let response = request.send().ok()?.json::<GitHubCommit>().ok()?;
+    let response = request.send().ok()?;
+    let commit: GitHubCommit = response.json().ok()?;
 
-    Some(response.sha)
+    info!("Fetched latest remote commit: {}", commit.sha);
+    Some(commit.sha)
 }
 
 fn get_local_commit_sha(repo: &Repository) -> Option<String> {
     let head = repo.head().ok()?;
     let commit = head.peel_to_commit().ok()?;
-    Some(commit.id().to_string())
+    let local_commit = commit.id().to_string();
+    info!("Fetched local commit: {}", local_commit);
+    Some(local_commit)
 }
 
 fn pull_latest_changes(local_path: &str) {
-    Command::new("git")
+    info!("Pulling latest changes...");
+    let status = Command::new("git")
         .arg("-C")
         .arg(local_path)
         .arg("pull")
-        .status()
-        .expect("Failed to execute git pull");
+        .status();
+
+    match status {
+        Ok(status) if status.success() => info!("Successfully pulled latest changes."),
+        Ok(_) => error!("Failed to pull latest changes: Git command did not succeed."),
+        Err(e) => error!("Failed to execute git pull: {}", e),
+    }
 }
 
 fn load_config() -> Config {
     let config_content = match fs::read_to_string("config.toml") {
-        Ok(content) => content,
+        Ok(content) => {
+            info!("Config file read successfully.");
+            content
+        }
         Err(e) => {
-            eprintln!("Failed to read config.toml: {}", e);
+            error!("Failed to read config.toml: {}", e);
             println!("Press Enter to exit...");
             io::stdout().flush().unwrap();
             let _ = io::stdin().read_line(&mut String::new());
@@ -80,9 +96,12 @@ fn load_config() -> Config {
     };
 
     match toml::from_str(&config_content) {
-        Ok(config) => config,
+        Ok(config) => {
+            info!("Config file parsed successfully.");
+            config
+        }
         Err(e) => {
-            eprintln!("Failed to parse config.toml: {}", e);
+            error!("Failed to parse config.toml: {}", e);
             println!("Press Enter to exit...");
             io::stdout().flush().unwrap();
             let _ = io::stdin().read_line(&mut String::new());
@@ -92,21 +111,47 @@ fn load_config() -> Config {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    CombinedLogger::init(vec![WriteLogger::new(
+        LevelFilter::Info,
+        ConfigBuilder::new().build(),
+        File::create("app.log").unwrap(),
+    )])?;
+
+    info!("Starting application");
+
     let config = load_config();
 
     let check_interval = Duration::from_secs(config.local_repo.check_interval_seconds);
     let mut last_change_time = SystemTime::now();
 
     loop {
-        let repo =
-            Repository::open(&config.local_repo.path).expect("Failed to open local repository");
+        let repo = match Repository::open(&config.local_repo.path) {
+            Ok(repo) => repo,
+            Err(e) => {
+                error!("Failed to open local repository: {}", e);
+                continue;
+            }
+        };
 
-        let latest_remote_commit =
-            get_latest_commit_sha(&config.github).expect("Failed to get latest remote commit");
-        let local_commit = get_local_commit_sha(&repo).expect("Failed to get local commit");
+        let latest_remote_commit = match get_latest_commit_sha(&config.github) {
+            Some(commit) => commit,
+            None => {
+                error!("Failed to get latest remote commit.");
+                continue;
+            }
+        };
+
+        let local_commit = match get_local_commit_sha(&repo) {
+            Some(commit) => commit,
+            None => {
+                error!("Failed to get local commit.");
+                continue;
+            }
+        };
 
         if latest_remote_commit != local_commit {
-            println!("\nNew changes detected. Pulling updates...");
+            info!("New changes detected. Pulling updates...");
             pull_latest_changes(&config.local_repo.path);
             last_change_time = SystemTime::now();
         } else {
