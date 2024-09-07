@@ -21,6 +21,7 @@ struct Config {
 struct GitHubConfig {
     owner: String,
     repo: String,
+    target_branch: String,
     access_token: Option<String>,
 }
 
@@ -52,8 +53,8 @@ fn exponential_backoff(attempt: u32) -> Duration {
 // Fetch the latest commit SHA from GitHub asynchronously using reqwest.
 async fn get_latest_commit_sha(config: &GitHubConfig) -> Option<String> {
     let url = format!(
-        "{}/{}/{}/commits/main",
-        GITHUB_API_URL, config.owner, config.repo
+        "{}/{}/{}/commits/{}",
+        GITHUB_API_URL, config.owner, config.repo, config.target_branch
     );
     let client = Client::new();
 
