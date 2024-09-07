@@ -1,15 +1,15 @@
 use chrono::{DateTime, Utc};
 use git2::Repository;
 use log::{error, info};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::Deserialize;
 use simplelog::*;
 use std::fs;
 use std::fs::File;
 use std::io::{self, Write};
 use std::process::Command;
-use std::thread;
 use std::time::{Duration, SystemTime};
+use tokio::time::sleep;
 
 #[derive(Deserialize)]
 struct Config {
@@ -37,7 +37,20 @@ struct GitHubCommit {
     sha: String,
 }
 
-fn get_latest_commit_sha(config: &GitHubConfig) -> Option<String> {
+// Utility function for formatting the time in a consistent format.
+fn format_time(time: SystemTime) -> String {
+    let datetime: DateTime<Utc> = time.into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+// Exponential backoff function to avoid hammering GitHub with too many requests in case of errors.
+fn exponential_backoff(attempt: u32) -> Duration {
+    let delay = 2u64.pow(attempt.min(6)); // Cap the delay to 64 seconds (2^6)
+    Duration::from_secs(delay)
+}
+
+// Fetch the latest commit SHA from GitHub asynchronously using reqwest.
+async fn get_latest_commit_sha(config: &GitHubConfig) -> Option<String> {
     let url = format!(
         "{}/{}/{}/commits/main",
         GITHUB_API_URL, config.owner, config.repo
@@ -50,13 +63,25 @@ fn get_latest_commit_sha(config: &GitHubConfig) -> Option<String> {
         request = request.header("Authorization", format!("token {}", token));
     }
 
-    let response = request.send().ok()?;
-    let commit: GitHubCommit = response.json().ok()?;
-
-    info!("Fetched latest remote commit: {}", commit.sha);
-    Some(commit.sha)
+    match request.send().await {
+        Ok(response) => match response.json::<GitHubCommit>().await {
+            Ok(commit) => {
+                info!("Fetched latest remote commit: {}", commit.sha);
+                Some(commit.sha)
+            }
+            Err(e) => {
+                error!("Failed to parse commit response: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            error!("Failed to send request: {}", e);
+            None
+        }
+    }
 }
 
+// Get the local commit SHA from the local Git repository.
 fn get_local_commit_sha(repo: &Repository) -> Option<String> {
     let head = repo.head().ok()?;
     let commit = head.peel_to_commit().ok()?;
@@ -65,6 +90,7 @@ fn get_local_commit_sha(repo: &Repository) -> Option<String> {
     Some(local_commit)
 }
 
+// Pull the latest changes from the remote repository.
 fn pull_latest_changes(local_path: &str) {
     info!("Pulling latest changes...");
     let status = Command::new("git")
@@ -80,6 +106,7 @@ fn pull_latest_changes(local_path: &str) {
     }
 }
 
+// Load the configuration from the config.toml file.
 fn load_config() -> Config {
     let config_content = match fs::read_to_string("config.toml") {
         Ok(content) => {
@@ -110,7 +137,9 @@ fn load_config() -> Config {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+// Main async function with exponential backoff and time formatting.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     CombinedLogger::init(vec![WriteLogger::new(
         LevelFilter::Info,
@@ -120,24 +149,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting application");
 
+    // Load config
     let config = load_config();
 
     let check_interval = Duration::from_secs(config.local_repo.check_interval_seconds);
     let mut last_change_time = SystemTime::now();
 
+    let mut backoff_attempt = 0;
+
+    // Main loop for checking repository status
     loop {
         let repo = match Repository::open(&config.local_repo.path) {
             Ok(repo) => repo,
             Err(e) => {
                 error!("Failed to open local repository: {}", e);
+                sleep(check_interval).await;
                 continue;
             }
         };
 
-        let latest_remote_commit = match get_latest_commit_sha(&config.github) {
+        let latest_remote_commit = match get_latest_commit_sha(&config.github).await {
             Some(commit) => commit,
             None => {
                 error!("Failed to get latest remote commit.");
+                sleep(exponential_backoff(backoff_attempt)).await;
+                backoff_attempt += 1;
                 continue;
             }
         };
@@ -146,18 +182,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(commit) => commit,
             None => {
                 error!("Failed to get local commit.");
+                sleep(exponential_backoff(backoff_attempt)).await;
+                backoff_attempt += 1;
                 continue;
             }
         };
 
+        // If new changes are detected, pull the latest changes
         if latest_remote_commit != local_commit {
             info!("New changes detected. Pulling updates...");
             pull_latest_changes(&config.local_repo.path);
             last_change_time = SystemTime::now();
+            backoff_attempt = 0; // Reset backoff after successful operation
         } else {
             let elapsed = last_change_time.elapsed()?.as_secs();
-            let last_change_time: DateTime<Utc> = last_change_time.into();
-            let formatted_time = last_change_time.format("%Y-%m-%d %H:%M:%S");
+            let formatted_time = format_time(last_change_time);
             print!(
                 "\rNo new changes since {} UTC. Elapsed time: {} seconds.",
                 formatted_time, elapsed
@@ -165,6 +204,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             io::stdout().flush()?; // Ensure the output is flushed
         }
 
-        thread::sleep(check_interval);
+        // Sleep for the configured interval before the next check
+        sleep(check_interval).await;
     }
 }
