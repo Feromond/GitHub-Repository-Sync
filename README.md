@@ -29,7 +29,13 @@ Future updates will allow config selection of whether to create a visible termin
    4. Choose “When the computer starts” as the trigger.
    5. Select “Start a Program” as the action.
    6. Browse to the compiled Rust executable (.exe) and select it.
-   7. Configure the task to run with highest privileges if needed.
+   7. Make sure set the "Start In (Optional)" field to wherever the exe will sit with the config
+   8. Configure the task to run with highest privileges if needed.
+   9. The system account may require additional access to the local git repo and pull changes. Use the following:
+
+      `git config --global --add safe.directory <path to repository>`
+
+      `git config --system --add safe.directory <path to repository>`
 
 2. Startup Folder:
 
