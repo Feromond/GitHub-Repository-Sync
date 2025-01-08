@@ -1,9 +1,6 @@
-[github]
-owner = "<git-username>"                 # Your GitHub username
-repo = "<git-repo-name>"                 # Your GitHub repo name that you will be comparing with
-target_branch = "main"                   # The remote branch that you want to compare with
-access_token = "<personal-access-token>" # Optional, omit if public repo (make sure to comment out or delete if omitting)
-
-[local_repo]
-path = "path/to/your/local/repo" # Input the path to your local repo
-check_interval_seconds = 20      # Time between checks on the repo
+repo_path = "C:\\Users\\<username>\\Documents\\local-repo"      # Local path to repository on the local machine (on macos it can look like: "/Users/name/location/")
+owner = "<your-github-username-or-org>"                         # Your username or organization name
+repo = "<your-repo>"                                            # Name of your repo within you personal github or your organization
+target_branch = "main"                                          # The branch you want to sync (will change your local branch and sync it to the matching remote branch)
+pat = "<your-github-personal-access-token>"                     # Personal access token for github to allow you to sync repos
+check_interval_seconds = 20                                     # The interval for how often it will check to see if the repo has change / updated
